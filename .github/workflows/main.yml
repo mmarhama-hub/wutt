@@ -16,35 +16,19 @@ jobs:
     steps:
       - name: Fetch wutt.net status
         id: fetch
-        run: |
-          HTTP=$(curl -sS -L -o status.html -w '%{http_code}' --max-time 15 -A "WuttMonitor" "https://wutt.net/status" || echo "000")
-          SIZE=$(wc -c < status.html 2>/dev/null || echo 0)
-          echo "http=$HTTP" >> $GITHUB_OUTPUT
-          echo "size=$SIZE" >> $GITHUB_OUTPUT
+        run: curl -sS -L -o status.html -w 'HTTP=%{http_code}' --max-time 15 -A "WuttMonitor" "https://wutt.net/status" | tee fetch.txt
 
       - name: Check components
         id: check
-        if: steps.fetch.outputs.http == '200'
+        if: startsWith(steps.fetch.outputs.stdout, 'HTTP=200')
         run: |
-          OUT=$(grep -c 'wutt-status-card--outage' status.html || true)
-          DEG=$(grep -c 'wutt-status-card--degraded' status.html || true)
-          echo "outages=${OUT:-0}" >> $GITHUB_OUTPUT
-          echo "degraded=${DEG:-0}" >> $GITHUB_OUTPUT
-          {
-            echo "affected<<EOF"
-            python3 -c "
-import re,sys
-h=open('status.html').read()
-for m in re.finditer(r'wutt-status-card wutt-status-card--(\w+)\"[^>]*>.*?<h4[^>]*>([^<]+)</h4>', h, re.DOTALL):
-    s,n=m.group(1),m.group(2).strip()
-    if s in ('outage','degraded'):
-        print('  -', n, '['+s.upper()+']')
-"
-            echo "EOF"
-          } >> $GITHUB_OUTPUT
+          OUT=$(grep -c 'wutt-status-card--outage' status.html || echo 0)
+          DEG=$(grep -c 'wutt-status-card--degraded' status.html || echo 0)
+          echo "outages=$OUT" >> $GITHUB_OUTPUT
+          echo "degraded=$DEG" >> $GITHUB_OUTPUT
 
       - name: Send email alert
-        if: steps.fetch.outputs.http != '200' || steps.check.outputs.outages != '0' || steps.check.outputs.degraded != '0'
+        if: steps.fetch.outputs.conclusion == 'failure' || steps.check.outputs.outages != '0' || steps.check.outputs.degraded != '0'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.hostinger.com
@@ -58,16 +42,10 @@ for m in re.finditer(r'wutt-status-card wutt-status-card--(\w+)\"[^>]*>.*?<h4[^>
           body: |
             Wutt.net status alert
 
-            Checked at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-            HTTP: ${{ steps.fetch.outputs.http }}
-            Page size: ${{ steps.fetch.outputs.size }} bytes
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
             Outages: ${{ steps.check.outputs.outages }}
             Degraded: ${{ steps.check.outputs.degraded }}
 
-            Affected components:
-            ${{ steps.check.outputs.affected }}
-
-            Live status: https://wutt.net/status
-            GitHub run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Check live status: https://wutt.net/status
           content_type: text/plain
