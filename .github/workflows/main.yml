@@ -1,6 +1,131 @@
-cd /path/to/wutt-repo
-mkdir -p .github/workflows
-cp /Users/mmarhama/Documents/GitHub/DarkShark/Wutt/.github/workflows/health-monitor.yml .github/workflows/
-git add .github/workflows/health-monitor.yml
-git commit -m "Add wutt.net health monitor (Layer 5)"
-git push
+name: Wutt.net Health Monitor
+
+on:
+  # Every 5 minutes. GitHub cron has 0-15 min jitter — fine for monitoring.
+  schedule:
+    - cron: '*/5 * * * *'
+  # Allow manual trigger from the Actions tab.
+  workflow_dispatch:
+
+# Avoid spamming: only run one at a time.
+concurrency:
+  group: wutt-health-monitor
+  cancel-in-progress: false
+
+jobs:
+  check-status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Fetch wutt.net status page
+        id: fetch
+        run: |
+          set +e
+          HTTP_CODE="000"
+          for i in 1 2 3; do
+            HTTP_CODE=$(curl -sS -L -o status.html \
+              -w '%{http_code}' \
+              --max-time 15 \
+              -A "WuttHealthMonitor/1.0 (+github-actions)" \
+              "https://wutt.net/status" 2>/dev/null)
+            if [ "$HTTP_CODE" = "200" ]; then
+              break
+            fi
+            sleep 3
+          done
+          SIZE=$(wc -c < status.html 2>/dev/null || echo "0")
+          echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "checked_at=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_OUTPUT"
+
+      - name: Parse component status
+        id: parse
+        if: steps.fetch.outputs.http_code == '200'
+        run: |
+          # Count component cards by status
+          OUTAGES=$(grep -oE 'wutt-status-card wutt-status-card--outage'   status.html | wc -l | tr -d ' ')
+          DEGRADED=$(grep -oE 'wutt-status-card wutt-status-card--degraded' status.html | wc -l | tr -d ' ')
+          OPERATIONAL=$(grep -oE 'wutt-status-card wutt-status-card--operational' status.html | wc -l | tr -d ' ')
+
+          # Overall summary status
+          SUMMARY=$(grep -oE 'wutt-status-summary wutt-status-summary--[a-z]+' status.html \
+                    | head -1 | sed 's/.*--//' || echo "unknown")
+
+          echo "outages=$OUTAGES"      >> "$GITHUB_OUTPUT"
+          echo "degraded=$DEGRADED"    >> "$GITHUB_OUTPUT"
+          echo "operational=$OPERATIONAL" >> "$GITHUB_OUTPUT"
+          echo "summary=$SUMMARY"      >> "$GITHUB_OUTPUT"
+
+          # Extract which components are degraded/outage (name + status)
+          AFFECTED=$(python3 - <<'PYEOF'
+          import re
+          html = open('status.html').read()
+          pat = re.compile(
+              r'<article class="wutt-status-card wutt-status-card--(\w+)"[^>]*>.*?'
+              r'<h4[^>]*>([^<]+)</h4>',
+              re.DOTALL,
+          )
+          lines = []
+          for m in pat.finditer(html):
+              status, name = m.group(1), m.group(2).strip()
+              if status in ("outage", "degraded"):
+                  lines.append(f"  - {name}: {status.upper()}")
+          print("\n".join(lines) if lines else "  (none)")
+          PYEOF
+          )
+          {
+            echo "affected<<EOF"
+            echo "$AFFECTED"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$OUTAGES" -gt 0 ] || [ "$DEGRADED" -gt 0 ]; then
+            echo "alert=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "alert=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send email alert
+        if: steps.fetch.outputs.http_code != '200' || steps.parse.outputs.alert == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.hostinger.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          from_address: "Wutt Monitor <hello@wutt.net>"
+          to_address: "hello@wutt.net"
+          subject: ${{
+            (steps.fetch.outputs.http_code != '200'
+              && format('[Wutt] SITE DOWN — HTTP {0}', steps.fetch.outputs.http_code))
+            || (steps.parse.outputs.outages > 0
+              && format('[Wutt] {0} component(s) OUTAGE', steps.parse.outputs.outages))
+            || format('[Wutt] {0} component(s) DEGRADED', steps.parse.outputs.degraded)
+          }}
+          body: |
+            Wutt.net status alert
+
+            Checked at:  ${{ steps.fetch.outputs.checked_at }}
+            HTTP status: ${{ steps.fetch.outputs.http_code }}
+            Page size:   ${{ steps.fetch.outputs.size }} bytes
+
+            ${{ steps.fetch.outputs.http_code == '200' && format('Overall summary: {0}', steps.parse.outputs.summary) || 'Live status page could not be fetched — site may be down.' }}
+
+            ${{ steps.fetch.outputs.http_code == '200' && format('Component counts:
+              - Operational: {0}
+              - Degraded:    {1}
+              - Outage:      {2}
+
+            Affected components:
+            {3}',
+              steps.parse.outputs.operational,
+              steps.parse.outputs.degraded,
+              steps.parse.outputs.outages,
+              steps.parse.outputs.affected) }}
+
+            Live status:  https://wutt.net/status
+            GitHub run:   ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          content_type: text/plain
+          convert_kwargs: false
