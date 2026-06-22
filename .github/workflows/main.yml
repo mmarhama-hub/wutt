@@ -16,19 +16,25 @@ jobs:
     steps:
       - name: Fetch wutt.net status
         id: fetch
-        run: curl -sS -L -o status.html -w 'HTTP=%{http_code}' --max-time 15 -A "WuttMonitor" "https://wutt.net/status" | tee fetch.txt
+        run: |
+          HTTP=$(curl -sS -L -o status.html -w '%{http_code}' --max-time 15 -A "WuttMonitor" "https://wutt.net/status" || echo 000)
+          echo "http=$HTTP" >> $GITHUB_OUTPUT
 
       - name: Check components
         id: check
-        if: startsWith(steps.fetch.outputs.stdout, 'HTTP=200')
+        if: always()
         run: |
-          OUT=$(grep -c 'wutt-status-card--outage' status.html || echo 0)
-          DEG=$(grep -c 'wutt-status-card--degraded' status.html || echo 0)
+          OUT=0
+          DEG=0
+          if [ -s status.html ]; then
+            OUT=$(grep -c 'wutt-status-card--outage' status.html 2>/dev/null || echo 0)
+            DEG=$(grep -c 'wutt-status-card--degraded' status.html 2>/dev/null || echo 0)
+          fi
           echo "outages=$OUT" >> $GITHUB_OUTPUT
           echo "degraded=$DEG" >> $GITHUB_OUTPUT
 
       - name: Send email alert
-        if: steps.fetch.outputs.conclusion == 'failure' || steps.check.outputs.outages != '0' || steps.check.outputs.degraded != '0'
+        if: steps.fetch.outputs.http != '200' || steps.check.outputs.outages != '0' || steps.check.outputs.degraded != '0'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.hostinger.com
@@ -44,6 +50,7 @@ jobs:
 
             Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+            HTTP: ${{ steps.fetch.outputs.http }}
             Outages: ${{ steps.check.outputs.outages }}
             Degraded: ${{ steps.check.outputs.degraded }}
 
