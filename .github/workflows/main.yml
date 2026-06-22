@@ -42,8 +42,8 @@ jobs:
           secure: 'true'
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
-          from_address: Wutt Monitor <hello@wutt.net>
-          to_address: hello@wutt.net
+          from: Wutt Monitor <hello@wutt.net>
+          to: hello@wutt.net
           subject: Wutt status alert
           body: |
             Wutt.net status alert
@@ -55,4 +55,3 @@ jobs:
             Degraded: ${{ steps.check.outputs.degraded }}
 
             Check live status: https://wutt.net/status
-          content_type: text/plain
