@@ -1,0 +1,6 @@
+cd /path/to/wutt-repo
+mkdir -p .github/workflows
+cp /Users/mmarhama/Documents/GitHub/DarkShark/Wutt/.github/workflows/health-monitor.yml .github/workflows/
+git add .github/workflows/health-monitor.yml
+git commit -m "Add wutt.net health monitor (Layer 5)"
+git push
