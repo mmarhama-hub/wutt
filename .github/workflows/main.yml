@@ -16,7 +16,7 @@ jobs:
     steps:
       - name: Fetch wutt.net status
         id: fetch
-        run: curl -sS -L -o status.html -w 'HTTP=%{http_code}' --max-time 15 -A "WuttMonitor" "https://wutt.net/status" | tee fetch.txt
+        run: curl -sS -L -o status.html -w 'HTTP=%{http_code}' --max-time 15 -A "WuttMonitor" "https://wutt.net/this-page-does-not-exist-zzz" | tee fetch.txt
 
       - name: Check components
         id: check
@@ -47,5 +47,5 @@ jobs:
             Outages: ${{ steps.check.outputs.outages }}
             Degraded: ${{ steps.check.outputs.degraded }}
 
-            Check live status: https://wutt.net/status
+            Check live status: https://wutt.net/this-page-does-not-exist-zzz
           content_type: text/plain
