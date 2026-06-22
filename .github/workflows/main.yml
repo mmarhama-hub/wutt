@@ -27,8 +27,10 @@ jobs:
           OUT=0
           DEG=0
           if [ -s status.html ]; then
-            OUT=$(grep -c 'wutt-status-card--outage' status.html 2>/dev/null || echo 0)
-            DEG=$(grep -c 'wutt-status-card--degraded' status.html 2>/dev/null || echo 0)
+            OUT=$(grep -oE 'wutt-status-card wutt-status-card--outage' status.html 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+            DEG=$(grep -oE 'wutt-status-card wutt-status-card--degraded' status.html 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+            OUT=${OUT:-0}
+            DEG=${DEG:-0}
           fi
           echo "outages=$OUT" >> $GITHUB_OUTPUT
           echo "degraded=$DEG" >> $GITHUB_OUTPUT
